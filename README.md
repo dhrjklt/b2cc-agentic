@@ -2,7 +2,12 @@
 
 This agent is set up to use the local vLLM inference engine by default, but it can also be integrated with other cloud-based inference APIs as needed.
 
-## Set Up
+To use this agent with Open WebUI, the LangGraph agent must be integrated into the Open WebUI pipeline system. Ensure your repository follows the pipeline structure outlined in [open-webui/pipelines](http://github.com/open-webui/pipelines) for compatibility.
+
+To deploy Open WebUI, follow the Docker setup instructions provided in the [Open WebUI repository](https://github.com/open-webui/open-webui).
+
+
+## Set Up The LangGraph Agent Pipeline
 1. Create environment using uv
 2. Install dependencies with uv
 ```shell
