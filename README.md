@@ -1,6 +1,6 @@
 # B2CC Agent in LangGraph + Open WebUI
 
-This agent is configured to work with local inference engine vLLM but can be integrate with other cloud based inference API's.
+This agent is set up to use the local vLLM inference engine by default, but it can also be integrated with other cloud-based inference APIs as needed.
 
 ## Set Up
 1. Create environment using uv
@@ -10,7 +10,7 @@ uv pip install requirements.txt
 ```
 3. Set up vLLM Server:
 ```shell
-vllm  serve meta-llama/Llama-3.1-8B-Instruct   --dtype auto    --max-model-len 32000   --max-num-seqs 8   --max-num-batched-tokens 8192  --enable-auto-tool-choice --tool-call-parser llama3_json
+vllm  serve Qwen/Qwen2.5-7B-Instruct  --dtype auto --enable-auto-tool-choice --tool-call-parser llama3_json
 ```
 4. Set up Gitlab and MySQL connection string in `.env` file (which should be located in `tools/`). 
 ```shell
