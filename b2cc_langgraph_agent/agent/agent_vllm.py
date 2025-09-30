@@ -1,4 +1,11 @@
 #!/usr/bin/env python
+"""
+title: B2CC MCP + vLLM Agent 
+author: Dhiraj
+description: LangGraph + MCP agent
+licence: MIT
+"""
+
 import asyncio
 
 from langchain_openai import ChatOpenAI
@@ -14,7 +21,7 @@ from langgraph.prebuilt import create_react_agent
 # Vector DB (Chroma retriever)
 # -----------------------------
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-vectordb = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+vectordb = Chroma(persist_directory="./data/chroma_db", embedding_function=embeddings)
 retriever = vectordb.as_retriever()
 
 
@@ -141,7 +148,7 @@ async def build_agent():
     tools = await client.get_tools()
 
     llm = ChatOpenAI(
-        model="Qwen/Qwen2.5-7B-Instruct",  # ✅ ensure this matches your vLLM server
+        model="Qwen/Qwen2.5-7B-Instruct",  # ensure this matches your vLLM server
         base_url="http://localhost:8000/v1",
         api_key="EMPTY",   # vLLM ignores this
         temperature=0.2,

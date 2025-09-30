@@ -26,7 +26,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 try:
-    from agent_vllm import (
+    from b2cc_langgraph_agent.agent.agent_vllm import (
         build_agent,
         retriever,
         route_query,
