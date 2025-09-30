@@ -21,6 +21,12 @@ DB_NAME=
 PROJECT_ID=
 GITLAB_PRIVATE_TOKEN=
 ```
+5. Run the MCP servers under `tools`.
+
+```shell
+uv run gitlab-mcp.py
+uv run mysql-mcp.py
+```
 
 ## Run
 1. Activate your uv environment
