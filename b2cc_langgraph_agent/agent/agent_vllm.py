@@ -1,21 +1,18 @@
 #!/usr/bin/env python
 """
-title: B2CC MCP + vLLM Agent 
+title: B2CC MCP + vLLM Agent
 author: Dhiraj
-description: LangGraph + MCP agent
+description: LangGraph + MCP agent with tool-call execution
 licence: MIT
 """
 
-import asyncio
-
+import asyncio, re, json
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import create_react_agent
-
 
 # -----------------------------
 # Vector DB (Chroma retriever)
@@ -23,7 +20,6 @@ from langgraph.prebuilt import create_react_agent
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 vectordb = Chroma(persist_directory="./data/chroma_db", embedding_function=embeddings)
 retriever = vectordb.as_retriever()
-
 
 # -----------------------------
 # MCP Client (MySQL + GitLab)
@@ -40,7 +36,6 @@ client = MultiServerMCPClient(
         },
     }
 )
-
 
 # -----------------------------
 # Example MySQL schema prompt
@@ -120,9 +115,8 @@ You can query the following resources:
    - Avoid raw JSON dumps unless explicitly requested.
 """
 
-
 # -----------------------------
-# Helper: turn docs into human answers
+# Helper: doc answers
 # -----------------------------
 async def answer_from_docs(llm, question, docs):
     context = "\n\n".join(d.page_content for d in docs[:3])
@@ -140,26 +134,8 @@ If the docs do not fully answer, politely say so.
     resp = await llm.ainvoke([HumanMessage(content=prompt)])
     return resp.content
 
-
 # -----------------------------
-# Build Agent with vLLM backend
-# -----------------------------
-async def build_agent():
-    tools = await client.get_tools()
-
-    llm = ChatOpenAI(
-        model="Qwen/Qwen2.5-7B-Instruct",  # ensure this matches your vLLM server
-        base_url="http://localhost:8000/v1",
-        api_key="EMPTY",   # vLLM ignores this
-        temperature=0.2,
-    )
-
-    agent = create_react_agent(llm, tools)
-    return agent, llm
-
-
-# -----------------------------
-# Router (Method 3 + schema hint)
+# Router
 # -----------------------------
 def route_query(user_input: str):
     text = user_input.lower()
@@ -171,9 +147,8 @@ def route_query(user_input: str):
         return "retriever"
     return "general"
 
-
 # -----------------------------
-# Normalize messages for vLLM
+# Normalize messages
 # -----------------------------
 def normalize_messages(messages):
     safe = []
@@ -189,15 +164,73 @@ def normalize_messages(messages):
             safe.append({"role": "assistant", "content": f"[{role}] {m.content}"})
     return safe
 
+# -----------------------------
+# Tool-call handler
+# -----------------------------
+async def handle_tool_calls(agent, client, memory, result):
+    """
+    Handle one or more tool calls until no <tool_call> blocks remain.
+    """
+    messages = result["messages"]
+    last_ai = [m for m in messages if isinstance(m, AIMessage)]
+    if not last_ai:
+        return str(result)
+
+    answer = last_ai[-1].content
+
+    while "<tool_call>" in answer:
+        match = re.search(r"<tool_call>\s*(\{.*\})\s*</tool_call>", answer, re.DOTALL)
+        if not match:
+            break
+
+        try:
+            tool_call = json.loads(match.group(1))
+            tool_name = tool_call["name"]
+            args = tool_call.get("arguments", {})
+
+            print(f"⚙️ Executing tool: {tool_name} with args {args}")
+            tool_result = await client.call(tool_name, **args)
+
+            # Save tool call + result to memory
+            memory.append(AIMessage(content=answer))
+            memory.append(SystemMessage(content=f"Tool result:\n{tool_result}"))
+
+            # Reinvoke the agent with tool results
+            followup = await agent.ainvoke({"messages": normalize_messages(memory)})
+            last_ai = [m for m in followup["messages"] if isinstance(m, AIMessage)]
+            if not last_ai:
+                return str(followup)
+
+            answer = last_ai[-1].content
+
+        except Exception as e:
+            return f"❌ Tool execution failed: {e}"
+
+    return answer
+
+# -----------------------------
+# Build Agent
+# -----------------------------
+async def build_agent():
+    tools = await client.get_tools()
+    llm = ChatOpenAI(
+        #model="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+        model="Qwen/Qwen2.5-7B-Instruct",
+        #model="mistralai/Mistral-7B-Instruct-v0.3",
+        base_url="http://localhost:8000/v1",
+        api_key="EMPTY",
+        temperature=0.2,
+    )
+    agent = create_react_agent(llm, tools)
+    return agent, llm
 
 # -----------------------------
 # CLI loop
 # -----------------------------
 async def main():
     print("🤖 B2CC MCP + vLLM Agent")
-
     agent, llm = await build_agent()
-    memory = []  # in-memory only, capped to ~15 turns
+    memory = []
 
     while True:
         user_input = input("\nYou: ")
@@ -220,31 +253,22 @@ async def main():
             memory.append(AIMessage(content=answer))
 
         else:
-            # Add a routing hint to the agent
+            # Add routing hint
             if target == "mysql":
-                hint = f"User question is about MYSQL. Use the MYSQL MCP tool. Here is the schema:\n{MYSQL_SCHEMA}"
-                memory.append(SystemMessage(content=hint))
+                memory.append(SystemMessage(content=f"User question is about MYSQL. Use the MYSQL MCP tool. Schema:\n{MYSQL_SCHEMA}"))
             elif target == "gitlab":
-                hint = f"User question is about GitLab. Use the GitLab MCP tool. Here is the schema:\n{GITLAB_SCHEMA}"
-                memory.append(SystemMessage(content=hint))
+                memory.append(SystemMessage(content=f"User question is about GitLab. Use the GitLab MCP tool. Schema:\n{GITLAB_SCHEMA}"))
 
             safe_messages = normalize_messages(memory)
             result = await agent.ainvoke({"messages": safe_messages})
-
-            messages = result["messages"]
-            last_ai = [m for m in messages if isinstance(m, AIMessage)]
-            if last_ai:
-                answer = last_ai[-1].content
-            else:
-                answer = str(result)
+            answer = await handle_tool_calls(agent, client, memory, result)
 
             print(f"Agent: {answer}")
             memory.append(AIMessage(content=answer))
 
-        # ✅ Keep only the last 15 user+assistant turns
+        # Trim memory
         if len(memory) > 30:
             memory = memory[-30:]
-
 
 if __name__ == "__main__":
     asyncio.run(main())
